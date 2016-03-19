@@ -1,4 +1,8 @@
-#much of this code is from http://code.activestate.com/recipes/124894-stopwatch-in-tkinter/
+#This program provides a serial interface for a Superconductor Technologies Superlink cryocooler, returning the cold finger temperature,
+#rejection temperature, and power drawn.
+
+#a lot of the GUI code is inspired by http://code.activestate.com/recipes/124894-stopwatch-in-tkinter/
+#Modified to add a serial interface for a Superlink Cryocooler
 
 from tkinter import *
 import time
