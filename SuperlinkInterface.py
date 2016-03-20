@@ -1,8 +1,8 @@
 #This program provides a serial interface for a Superconductor Technologies Superlink cryocooler, returning the cold finger temperature,
-#rejection temperature, and power drawn.
+#rejection temperature, and power drawn. It also allows you to switch the cryocooler between auto and manual shutdown modes
+#I haven't used Python in ages, I'm sure there's goofs somewhere, if you find some, tell me!
 
 #a lot of the GUI code is inspired by http://code.activestate.com/recipes/124894-stopwatch-in-tkinter/
-#Modified to add a serial interface for a Superlink Cryocooler
 
 from tkinter import *
 import time
@@ -39,9 +39,7 @@ def ConvertTemp(raw_T, startpoint, endpoint, offset, gain):
 	
 		return temp
 	except ValueError:
-		print("Error!")
-		print(raw_T[startpoint:endpoint])
-		print(raw_T)
+		print("Error converting temperature!")
 		return(0.00)
 
 def ConvertPower(raw_P, startpoint, endpoint, scaling):
@@ -53,13 +51,10 @@ def ConvertPower(raw_P, startpoint, endpoint, scaling):
 	
 		return pwr
 	except ValueError:
-		print("Error!")
-		print(startpoint)
-		print(endpoint)
-		print(raw_P[startpoint:endpoint])
-		print(raw_P)
-		return(0.00)
+		print("Error converting power!")
 
+		return(0.00)
+	
 
 #returns the position of the start of the nth space (spacenum) after the SearchFor string.
 #Used to get the proper bit out of the 
@@ -80,6 +75,10 @@ Trej_offset = 12.537
 Trej_gain = -0.0344
 
 Power_Scaling = 0.0075
+
+#The various states of the superlink
+SuperlinkModeOptions = ["Auto", "Manual"]
+SuperlinkStateOptions = ["Initial", "Cooldown", "Regulate", "Bypass", "Shutdown"]
 
 #Initialize but don't start serial connection. Superlink uses 19200 baud connection. Timeout is arbitrary. Set the com port at run time.
 ser = serial.Serial(port=None, baudrate=19200, timeout=3)
@@ -108,11 +107,14 @@ class App(Frame):
 		self._elapsedtime = 0.0
 		self._running = 0
 
+		
 		self.timestr = StringVar()	
 		self.TcoldWindow = StringVar()
 		self.TrejWindow = StringVar()
 		self.PowerWindow = StringVar()
-		
+		self.ComPortText = StringVar()
+		self.SuperlinkModeWindow = StringVar()
+		self.SuperlinkStateWindow = StringVar()
 		
 		
 		self.makeWidgets()		
@@ -121,13 +123,20 @@ class App(Frame):
 		# Make all visible labels and buttons
 		
 		ButtonsRow = 5
-		Button(self, text='Start', command=self.Start).grid(row=ButtonsRow, column = 0)
-		Button(self, text='Stop', command=self.Stop).grid(row=ButtonsRow, column = 1)
-		Button(self, text='Reset', command=self.Reset).grid(row=ButtonsRow, column = 2)
+		Button(self, text='Start serial comm', command=self.Start).grid(row=ButtonsRow, column = 0)
+		Button(self, text='Stop serial comm', command=self.Stop).grid(row=ButtonsRow, column = 1)
+		Button(self, text='Toggle mode', command=self.PowerToggle).grid(row = ButtonsRow, column = 2)
 		Button(self, text='Quit', command=self.quit).grid(row=ButtonsRow, column = 3)
 		
+		
+		
+		ComEntry = Entry(self, textvariable=self.ComPortText)
+		ComEntry.grid(row = 4, column = 1)
+		Label(self, text = "COM port").grid(row=4, column = 0)
+		
+		Label(self, text = "Time elapsed").grid(row=0, column = 2)
 		l = Label(self, textvariable=self.timestr)
-		l.grid(row=3, column=0)
+		l.grid(row=0, column=3)
 		
 		Label(self, text="Tcold (K)").grid(row=0, column=0)
 		Tcold = Label(self, textvariable=self.TcoldWindow)
@@ -141,6 +150,13 @@ class App(Frame):
 		Power = Label(self, textvariable=self.PowerWindow)
 		Power.grid(row=2, column=1)
 		
+		Label(self, text="Status").grid(row=3, column=0)
+		SuperlinkMode = Label(self, textvariable=self.SuperlinkModeWindow)
+		SuperlinkMode.grid(row=3, column=1)
+		SuperlinkState = Label(self, textvariable=self.SuperlinkStateWindow)
+		SuperlinkState.grid(row=3, column = 2)
+		
+		
 		self._setTime(self._elapsedtime)
 				
 		
@@ -151,6 +167,7 @@ class App(Frame):
 		self._elapsedtime = time.time() - self._start
 		self._setTime(self._elapsedtime)
 		if ser.isOpen():
+			#First, query for the temperatures
 			query = '<TP OP="GT" LC="MS"/>' #inquiry command for cold side and rejection temps. 
 			#Cold side temp is second bit (between spaces 1 and 2)
 			#Rejection temp is third bit (between spaces 2 and 3)
@@ -164,6 +181,7 @@ class App(Frame):
 				RejTemp = ConvertTemp(queryRet, FindSpaceAfter(queryRet, query, 2) + 1, FindSpaceAfter(queryRet, query, 3), Trej_offset, Trej_gain)
 				RejTemp =  truncate(RejTemp,1)
 			
+			#Next, query for the power
 			query = '<PW OP="GT" LC="MS"/>' #inquiry command for cooler power
 			queryRet = SerialQuery(query)
 			
@@ -174,10 +192,27 @@ class App(Frame):
 				Power = ConvertPower(queryRet, FindSpaceAfter(queryRet, query, 0) + 1, FindSpaceAfter(queryRet, query, 1), Power_Scaling)
 				Power = truncate(Power, 1)
 			
+			#Last, query for the Superlink status and auto/manual mode
+			
+			query = '<TP OP="GT" LC="SM"/>'
+			queryRet = SerialQuery(query)
+			
+			if len(queryRet)==0:
+				SuperlinkMode= "Serial timed out"
+				SuperlinkState= "Serial timed out"
+			else:
+				
+				SuperlinkMode= int(queryRet[FindSpaceAfter(queryRet, query, 0)+1:FindSpaceAfter(queryRet, query, 0)+2])
+				SuperlinkMode = SuperlinkModeOptions[SuperlinkMode]
+				SuperlinkState= int(queryRet[FindSpaceAfter(queryRet, query, 1)+1:FindSpaceAfter(queryRet, query, 1)+2])
+				SuperlinkState= SuperlinkStateOptions[SuperlinkState]
+			
 			#write everything to proper labels
 			self.TcoldWindow.set(ColdTemp)
 			self.TrejWindow.set(RejTemp)
 			self.PowerWindow.set(Power)
+			self.SuperlinkModeWindow.set(SuperlinkMode)
+			self.SuperlinkStateWindow.set(SuperlinkState)
 		
 		else:
 			#If serial is off, do nothing
@@ -196,17 +231,21 @@ class App(Frame):
 	def Start(self):													 
 		""" Start the stopwatch, ignore if running. """
 		global ser
-		if not self._running:			 
-			try:
-				#Start serial connection on the proper port.
-				ser = serial.Serial(port='COM5', baudrate=19200, timeout=3)
-			except serial.serialutil.SerialException:
-				print("Serial error")
-			
-			self._start = time.time() - self._elapsedtime
-			
-			self._update()
-			self._running = 1	
+		if not self._running:
+			if self.ComPortText.get() == "":
+				self.TcoldWindow.set("Need to enter a COM port")
+			else:
+				try:
+					#Start serial connection on the proper port.
+					ser = serial.Serial(port=self.ComPortText.get(), baudrate=19200, timeout=3)
+				except serial.serialutil.SerialException:
+
+					self.TcoldWindow.set("Serial error")
+				
+				self._start = time.time() - self._elapsedtime
+				
+				self._update()
+				self._running = 1	
 			
 			
 			
@@ -221,17 +260,22 @@ class App(Frame):
 			#close serial port
 			ser.close()
 	
-	def Reset(self):								  
-		""" Reset the stopwatch. """
-		self._start = time.time()		  
-		self._elapsedtime = 0.0	   
-		self._setTime(self._elapsedtime)
+	def PowerToggle(self):
+		#toggles the Cryocooler between auto and manual modes
+		global ser
+		if self._running and ser.isOpen():
+			if self.SuperlinkModeWindow.get() == "Auto":
+				query = '<TP OP="ST" LC="SM">1 4</TP>'
+			else:
+				query =  '<TP OP="ST" LC="SM">0 4</TP>'
+				
+			SerialQuery(query)
 		
 		
 def main():
 	root = Tk()
 	sw = App(root)
-	root.title("Stupendous Superlink Serial Squaker")
+	root.title("Stupendous Superlink Serial Snooper")
 	sw.pack(side=TOP)
 	root.mainloop()
 
