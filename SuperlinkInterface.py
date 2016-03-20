@@ -57,7 +57,6 @@ def ConvertPower(raw_P, startpoint, endpoint, scaling):
 	
 
 #returns the position of the start of the nth space (spacenum) after the SearchFor string.
-#Used to get the proper bit out of the 
 def FindSpaceAfter(SearchMsg, SearchFor, SpaceNum):
 	StartPt = SearchMsg.find(SearchFor) + len(SearchFor)-1
 	for x in range(1, SpaceNum+1):
